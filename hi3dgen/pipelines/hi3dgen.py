@@ -116,6 +116,7 @@ class Hi3DGenPipeline(Pipeline):
                 has_alpha = True
         
         if has_alpha:
+            print("  → Using existing alpha channel for background removal.")
             output = input
         else:
             input = input.convert('RGB')
