@@ -125,12 +125,12 @@ class Hi3DGenPipeline(Pipeline):
             if scale < 1:
                 input = input.resize((int(input.width * scale), int(input.height * scale)), Image.Resampling.LANCZOS)
             
-            # Load BiRefNet model if not already loaded
-            if getattr(self, 'birefnet_model', None) is None:
-                self._lazy_load_birefnet()
+            # Load BEN2 model if not already loaded
+            if getattr(self, 'ben2_model', None) is None:
+                self._lazy_load_ben2()
             
-            # Get mask using BiRefNet
-            mask = self._get_birefnet_mask(input)
+            # Get mask using BEN2
+            mask = self._get_ben2_mask(input)
             
             # Convert input to RGBA and apply mask
             input_rgba = input.convert('RGBA')
@@ -196,35 +196,28 @@ class Hi3DGenPipeline(Pipeline):
         
         return output
 
-    def _lazy_load_birefnet(self):
-        """Lazy loading of the BiRefNet model"""
-        from transformers import AutoImageProcessor, Mask2FormerForUniversalSegmentation, AutoModelForImageSegmentation
-        self.birefnet_model = AutoModelForImageSegmentation.from_pretrained(
-            'weights/BiRefNet',
-            trust_remote_code=True
-        ).to(self.device)
-        self.birefnet_model.eval()
+    def _lazy_load_ben2(self):
+        """Lazy loading of the BEN2 model"""
+        from ben2 import BEN_Base
+        
+        # Load BEN2 model using the correct library
+        self.ben2_model = BEN_Base.from_pretrained("PramaLLC/BEN2").to(self.device)
+        self.ben2_model.eval()
 
-    def _get_birefnet_mask(self, image: Image.Image) -> np.ndarray:
-        """Get object mask using BiRefNet"""
-        image_size = (1024, 1024)
-        transform_image = transforms.Compose([
-            transforms.Resize(image_size),
-            transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ])
+    def _get_ben2_mask(self, image: Image.Image) -> np.ndarray:
+        """Get object mask using BEN2"""
+        # Use BEN2's built-in inference method
+        # refine_foreground=False for faster processing
+        foreground = self.ben2_model.inference(image, refine_foreground=False)
         
-        input_images = transform_image(image).unsqueeze(0).to(self.device)
+        # Extract alpha channel from the foreground image
+        alpha = foreground.getchannel('A')
         
-        with torch.no_grad():
-            preds = self.birefnet_model(input_images)[-1].sigmoid().cpu()
+        # Convert to numpy array and binarize (threshold at 0.85 * 255 ≈ 217)
+        mask_np = np.array(alpha)
         
-        pred = preds[0].squeeze()
-        pred_pil = transforms.ToPILImage()(pred)
-        mask = pred_pil.resize(image.size)
-        mask_np = np.array(mask)
-
-        return (mask_np > 128).astype(np.uint8)
+        # Binarize mask (threshold at 128 to match previous behavior)
+        return (mask_np > 255 * 0.85).astype(np.uint8)
 
     @torch.no_grad()
     def encode_image(self, image: Union[torch.Tensor, list[Image.Image]]) -> torch.Tensor:
