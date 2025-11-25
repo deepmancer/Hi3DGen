@@ -251,10 +251,29 @@ def infer_directory_single(input_dir, output_dir, hi3dgen_pipeline, normal_predi
         print(f"No images found in {input_dir}")
         return
 
-    print(f"Found {len(image_paths)} images")
+    # Filter out images that already have output meshes
+    images_to_process = []
+    for image_path in image_paths:
+        sample_id = os.path.splitext(os.path.basename(image_path))[0]
+        sample_output_dir = os.path.join(output_dir, sample_id)
+        output_path = os.path.join(sample_output_dir, f"shape_mesh.{kwargs.get('output_format','glb')}")
+        
+        if not os.path.exists(output_path):
+            images_to_process.append(image_path)
+    
+    total_images = len(image_paths)
+    already_processed = total_images - len(images_to_process)
+    
+    print(f"Total images: {total_images}")
+    print(f"Already processed: {already_processed}")
+    print(f"Remaining to process: {len(images_to_process)}")
+    
+    if len(images_to_process) == 0:
+        print("All images have already been processed!")
+        return
 
     success_count = 0
-    for image_path in tqdm(image_paths, desc="Processing images"):
+    for image_path in tqdm(images_to_process, desc="Processing images"):
         # Get sample_id from image filename (without extension)
         sample_id = os.path.splitext(os.path.basename(image_path))[0]
         
@@ -268,7 +287,7 @@ def infer_directory_single(input_dir, output_dir, hi3dgen_pipeline, normal_predi
         if infer_image_single(image_path, output_path, hi3dgen_pipeline, normal_predictor, **kwargs):
             success_count += 1
 
-    print(f"\n✓ Processing complete! {success_count}/{len(image_paths)} meshes generated successfully")
+    print(f"\n✓ Processing complete! {success_count}/{len(images_to_process)} meshes generated successfully")
     print(f"  Output directory: {output_dir}")
 
 
@@ -288,10 +307,31 @@ def infer_directory_multiview(input_dir, output_dir, hi3dgen_pipeline, normal_pr
     
     if subdirs:
         # Multi-sample mode: each subfolder is a sample with multiple views
-        print(f"Found {len(subdirs)} samples (multi-sample mode)")
+        
+        # Filter out samples that already have output meshes
+        samples_to_process = []
+        for sample_id in sorted(subdirs):
+            sample_output_dir = os.path.join(output_dir, sample_id)
+            output_path = os.path.join(sample_output_dir, f"shape_mesh.{kwargs.get('output_format','glb')}")
+            
+            if not os.path.exists(output_path):
+                samples_to_process.append(sample_id)
+        
+        total_samples = len(subdirs)
+        already_processed = total_samples - len(samples_to_process)
+        
+        print(f"Total samples: {total_samples}")
+        print(f"Already processed: {already_processed}")
+        print(f"Remaining to process: {len(samples_to_process)}")
+        
+        if len(samples_to_process) == 0:
+            print("All samples have already been processed!")
+            return
+        
+        print(f"Found {len(samples_to_process)} samples to process (multi-sample mode)")
         success_count = 0
         
-        for sample_id in tqdm(sorted(subdirs), desc="Processing samples"):
+        for sample_id in tqdm(samples_to_process, desc="Processing samples"):
             sample_dir = os.path.join(input_dir, sample_id)
             image_paths = sorted([
                 os.path.join(sample_dir, f) for f in os.listdir(sample_dir)
@@ -313,7 +353,7 @@ def infer_directory_multiview(input_dir, output_dir, hi3dgen_pipeline, normal_pr
             if infer_image_multiview(image_paths, output_path, hi3dgen_pipeline, normal_predictor, **kwargs):
                 success_count += 1
         
-        print(f"\n✓ Processing complete! {success_count}/{len(subdirs)} meshes generated successfully")
+        print(f"\n✓ Processing complete! {success_count}/{len(samples_to_process)} meshes generated successfully")
     else:
         # Single-sample mode: all images in directory are views of one sample
         image_paths = sorted([
@@ -326,7 +366,6 @@ def infer_directory_multiview(input_dir, output_dir, hi3dgen_pipeline, normal_pr
             print(f"No images found in {input_dir}")
             return
         
-        print(f"Found {len(image_paths)} views (single-sample mode)")
         sample_id = os.path.basename(input_dir.rstrip('/'))
         
         # Create sample-specific output directory
@@ -335,6 +374,14 @@ def infer_directory_multiview(input_dir, output_dir, hi3dgen_pipeline, normal_pr
         
         # Output mesh always named shape_mesh.glb
         output_path = os.path.join(sample_output_dir, f"shape_mesh.{kwargs.get('output_format','glb')}")
+        
+        # Check if already processed
+        if os.path.exists(output_path):
+            print(f"Sample already processed: {output_path}")
+            print("Skipping...")
+            return
+        
+        print(f"Found {len(image_paths)} views (single-sample mode)")
         
         if infer_image_multiview(image_paths, output_path, hi3dgen_pipeline, normal_predictor, **kwargs):
             print(f"\n✓ Processing complete! Mesh generated successfully")
@@ -562,7 +609,7 @@ if __name__ == "__main__":
     # Post-processing
     parser.add_argument("--disable_postprocessing", action="store_true",
                         help="Disable mesh post-processing (enabled by default)")
-    parser.add_argument("--target_faces", type=int, default=300_000,
+    parser.add_argument("--target_faces", type=int, default=200_000,
                         help="Target number of faces for post-processed mesh (default: 300,000)")
     
     # Multiview
