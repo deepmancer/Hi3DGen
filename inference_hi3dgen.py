@@ -566,11 +566,11 @@ if __name__ == "__main__":
     # Input/Output
     parser.add_argument("--input", type=str, help="Path to input image file")
     parser.add_argument("--output", type=str, help="Path to output mesh file")
-    parser.add_argument("--input_dir", type=str, help="Path to input directory containing images")
-    parser.add_argument("--output_dir", type=str, help="Path to output directory for meshes")
+    parser.add_argument("--input_dir", type=str, help="Path to input directory containing images", default="/workspace/celeba_subset/image/")
+    parser.add_argument("--output_dir", type=str, help="Path to output directory for meshes", default="/workspace/celeba_subset/hi3dgen/")
 
     # Model
-    parser.add_argument("--model_path", type=str, default="weights/trellis-normal-v0-1",
+    parser.add_argument("--model_path", type=str, default="Stable-X/trellis-normal-v0-1",
                         help="Path to Hi3DGen model weights (default: weights/trellis-normal-v0-1)")
     parser.add_argument("--nirne_weights_dir", type=str, default="./weights",
                         help="Directory to cache NiRNE weights (default: ./weights)")
