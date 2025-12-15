@@ -25,8 +25,6 @@ def postprocess_mesh_trimesh(mesh_path, output_path=None, target_faces=None):
         mesh.remove_infinite_values()
         mesh.remove_unreferenced_vertices()
         mesh.merge_vertices()
-        mesh.remove_duplicate_faces()
-        mesh.remove_degenerate_faces()
         mesh.remove_unreferenced_vertices()
         mesh.fix_normals()
         try:
@@ -43,16 +41,7 @@ def postprocess_mesh_trimesh(mesh_path, output_path=None, target_faces=None):
             mesh.remove_unreferenced_vertices()
             print(f"  Retained largest component: {len(mesh.vertices)} vertices, {len(mesh.faces)} faces")
 
-        if not mesh.is_watertight:
-            print("  Mesh not watertight, attempting repairs")
-            changed = mesh.fill_holes()
-            if changed:
-                print("    Filled holes")
-            trimesh.repair.fix_normals(mesh, multibody=True)
-            trimesh.repair.fix_inversion(mesh)
-            mesh.merge_vertices()
-            mesh.remove_unreferenced_vertices()
-
+        
         if target_faces:
             target_faces = max(int(target_faces), 4)
             if len(mesh.faces) > target_faces:
@@ -64,6 +53,16 @@ def postprocess_mesh_trimesh(mesh_path, output_path=None, target_faces=None):
                     print(f"  Simplified mesh to {len(mesh.faces)} faces")
                 else:
                     print("  Simplification skipped (poor result)")
+
+        if not mesh.is_watertight:
+            print("  Mesh not watertight, attempting repairs")
+            changed = mesh.fill_holes()
+            if changed:
+                print("    Filled holes")
+            trimesh.repair.fix_normals(mesh, multibody=True)
+            trimesh.repair.fix_inversion(mesh)
+            mesh.merge_vertices()
+            mesh.remove_unreferenced_vertices()
 
         trimesh.smoothing.filter_laplacian(mesh, iterations=1)
         mesh.remove_unreferenced_vertices()

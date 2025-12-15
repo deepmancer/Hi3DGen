@@ -19,6 +19,9 @@ from pathlib import Path
 from tqdm import tqdm
 import glob
 import trimesh
+import random
+import time
+import pandas as pd
 from hi3dgen.pipelines import Hi3DGenPipeline
 from mesh_postprocessing import postprocess_mesh
 
@@ -239,6 +242,21 @@ def infer_directory_single(input_dir, output_dir, hi3dgen_pipeline, normal_predi
 
     os.makedirs(output_dir, exist_ok=True)
 
+    # Check for pairs.csv to filter by target_id
+    pairs_csv_path = os.path.join(os.path.dirname(input_dir.rstrip('/')), 'pairs.csv')
+    target_ids = None
+    if os.path.exists(pairs_csv_path):
+        print(f"Found pairs.csv at {pairs_csv_path}")
+        try:
+            pairs_df = pd.read_csv(pairs_csv_path)
+            if 'target_id' in pairs_df.columns:
+                target_ids = set(pairs_df['target_id'].astype(str).unique())
+                print(f"Filtering by {len(target_ids)} unique target_ids from pairs.csv")
+            else:
+                print("Warning: pairs.csv found but 'target_id' column not present")
+        except Exception as e:
+            print(f"Warning: Failed to read pairs.csv: {e}")
+
     image_extensions = ['*.png', '*.jpg', '*.jpeg', '*.PNG', '*.JPG', '*.JPEG']
     image_paths = []
     for ext in image_extensions:
@@ -246,6 +264,16 @@ def infer_directory_single(input_dir, output_dir, hi3dgen_pipeline, normal_predi
         image_paths.extend(glob.glob(os.path.join(input_dir, "**", ext), recursive=True))
 
     image_paths = sorted(list(set(image_paths)))
+    
+    # Filter by target_ids if pairs.csv was found
+    if target_ids is not None:
+        filtered_paths = []
+        for image_path in image_paths:
+            sample_id = os.path.splitext(os.path.basename(image_path))[0]
+            if sample_id in target_ids:
+                filtered_paths.append(image_path)
+        print(f"Filtered {len(image_paths)} images down to {len(filtered_paths)} based on target_ids")
+        image_paths = filtered_paths
 
     if len(image_paths) == 0:
         print(f"No images found in {input_dir}")
@@ -271,6 +299,11 @@ def infer_directory_single(input_dir, output_dir, hi3dgen_pipeline, normal_predi
     if len(images_to_process) == 0:
         print("All images have already been processed!")
         return
+
+    # Randomize processing order using current timestamp as seed
+    random.seed(int(time.time()))
+    random.shuffle(images_to_process)
+    print(f"Randomized processing order (seed: {int(time.time())})")
 
     success_count = 0
     for image_path in tqdm(images_to_process, desc="Processing images"):
@@ -300,8 +333,29 @@ def infer_directory_multiview(input_dir, output_dir, hi3dgen_pipeline, normal_pr
     
     os.makedirs(output_dir, exist_ok=True)
     
+    # Check for pairs.csv to filter by target_id
+    pairs_csv_path = os.path.join(os.path.dirname(input_dir.rstrip('/')), 'pairs.csv')
+    target_ids = None
+    if os.path.exists(pairs_csv_path):
+        print(f"Found pairs.csv at {pairs_csv_path}")
+        try:
+            pairs_df = pd.read_csv(pairs_csv_path)
+            if 'target_id' in pairs_df.columns:
+                target_ids = set(pairs_df['target_id'].astype(str).unique())
+                print(f"Filtering by {len(target_ids)} unique target_ids from pairs.csv")
+            else:
+                print("Warning: pairs.csv found but 'target_id' column not present")
+        except Exception as e:
+            print(f"Warning: Failed to read pairs.csv: {e}")
+    
     # Check if input_dir contains subdirectories (multi-sample) or just images (single-sample)
     subdirs = [d for d in os.listdir(input_dir) if os.path.isdir(os.path.join(input_dir, d))]
+    
+    # Filter subdirs by target_ids if pairs.csv was found
+    if target_ids is not None and subdirs:
+        filtered_subdirs = [d for d in subdirs if d in target_ids]
+        print(f"Filtered {len(subdirs)} subdirectories down to {len(filtered_subdirs)} based on target_ids")
+        subdirs = filtered_subdirs
     
     image_extensions = ['.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.JPEG']
     
@@ -328,7 +382,11 @@ def infer_directory_multiview(input_dir, output_dir, hi3dgen_pipeline, normal_pr
             print("All samples have already been processed!")
             return
         
+        # Randomize processing order using current timestamp as seed
+        random.seed(int(time.time()))
+        random.shuffle(samples_to_process)
         print(f"Found {len(samples_to_process)} samples to process (multi-sample mode)")
+        print(f"Randomized processing order (seed: {int(time.time())})")
         success_count = 0
         
         for sample_id in tqdm(samples_to_process, desc="Processing samples"):
