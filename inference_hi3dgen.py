@@ -51,7 +51,11 @@ class BackgroundRemover:
         mask = ((np.array(alpha) / 255.0) > 0.85).astype(np.uint8) * 255
         return foreground, Image.fromarray(mask)
 
-def preprocess_image(input: Image.Image, resolution=518) -> Image.Image:
+
+bg_remover = BackgroundRemover()
+
+
+def preprocess_image(input: Image.Image, resolution=1024) -> Image.Image:
     """
     Preprocess the input image.
     """
@@ -69,21 +73,25 @@ def preprocess_image(input: Image.Image, resolution=518) -> Image.Image:
         scale = min(1, 1024 / max_size)
         if scale < 1:
             input = input.resize((int(input.width * scale), int(input.height * scale)), Image.Resampling.LANCZOS)
-        bg_remover = BackgroundRemover()
         output, _ = bg_remover.remove_background(input, refine_foreground=False)
     output_np = np.array(output)
     alpha = output_np[:, :, 3]
-    bbox = np.argwhere(alpha > 0.8 * 255)
+    bbox = np.argwhere(alpha > 0.85 * 255)
     bbox = np.min(bbox[:, 1]), np.min(bbox[:, 0]), np.max(bbox[:, 1]), np.max(bbox[:, 0])
     center = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
     size = max(bbox[2] - bbox[0], bbox[3] - bbox[1])
-    size = int(size * 1.2)
+    size = int(size * 1.15)
     bbox = center[0] - size // 2, center[1] - size // 2, center[0] + size // 2, center[1] + size // 2
     output = output.crop(bbox)  # type: ignore
     output = output.resize((resolution, resolution), Image.Resampling.LANCZOS)
     output = np.array(output).astype(np.float32) / 255
     output = output[:, :, :3] * output[:, :, 3:4]
     output = Image.fromarray((output * 255).astype(np.uint8))
+    image, silh = bg_remover.remove_background(output, refine_foreground=False)
+    image_np = np.array(image).astype(np.float32) 
+    silh_np = (np.array(silh) > 0.85 * 255).astype(np.float32)
+    image_np = image_np[:, :, :3] * silh_np[:, :, None]
+    output = Image.fromarray((image_np).astype(np.uint8))
     return output
 
 def estimate_normal(image, normal_predictor, resolution=1024, match_input_resolution=True, num_inference_steps=None):
@@ -681,7 +689,7 @@ if __name__ == "__main__":
     # Input/Output
     parser.add_argument("--input", type=str, help="Path to input image file")
     parser.add_argument("--output", type=str, help="Path to output mesh file")
-    parser.add_argument("--input_dir", type=str, help="Path to input directory containing images", default="/workspace/celeba_reduced/matted_image_centered/")
+    parser.add_argument("--input_dir", type=str, help="Path to input directory containing images", default="/workspace/celeba_reduced/image_outpainted/")
     parser.add_argument("--output_dir", type=str, help="Path to output directory for meshes", default="/workspace/celeba_reduced/hi3dgen/")
 
     # Model
