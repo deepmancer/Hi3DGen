@@ -25,6 +25,66 @@ import pandas as pd
 from hi3dgen.pipelines import Hi3DGenPipeline
 from mesh_postprocessing import postprocess_mesh
 
+import numpy as np
+import torch
+import torch.nn as nn
+from PIL import Image
+
+from ben2 import BEN_Base
+
+torch.set_float32_matmul_precision(['high', 'highest'][0])
+
+class BackgroundRemover:
+    
+    def __init__(self, device: str | torch.device = 'cuda'):
+        self.device = torch.device(device)
+        self.birefnet = self._init_birefnet()
+    
+    def _init_birefnet(self) -> nn.Module:
+        model = BEN_Base.from_pretrained("PramaLLC/BEN2").to(self.device)
+        model.eval()
+        return model
+
+    def remove_background(self, image: Image.Image, refine_foreground: bool = False) -> tuple[Image.Image, Image.Image]:
+        foreground = self.birefnet.inference(image, refine_foreground=refine_foreground)
+        alpha = foreground.getchannel('A')
+        mask = ((np.array(alpha) / 255.0) > 0.85).astype(np.uint8) * 255
+        return foreground, Image.fromarray(mask)
+
+def preprocess_image(input: Image.Image, resolution=518) -> Image.Image:
+    """
+    Preprocess the input image.
+    """
+    # if has alpha channel, use it directly; otherwise, remove background
+    has_alpha = False
+    if input.mode == 'RGBA':
+        alpha = np.array(input)[:, :, 3]
+        if not np.all(alpha == 255):
+            has_alpha = True
+    if has_alpha:
+        output = input
+    else:
+        input = input.convert('RGB')
+        max_size = max(input.size)
+        scale = min(1, 1024 / max_size)
+        if scale < 1:
+            input = input.resize((int(input.width * scale), int(input.height * scale)), Image.Resampling.LANCZOS)
+        bg_remover = BackgroundRemover()
+        output, _ = bg_remover.remove_background(input, refine_foreground=False)
+    output_np = np.array(output)
+    alpha = output_np[:, :, 3]
+    bbox = np.argwhere(alpha > 0.8 * 255)
+    bbox = np.min(bbox[:, 1]), np.min(bbox[:, 0]), np.max(bbox[:, 1]), np.max(bbox[:, 0])
+    center = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+    size = max(bbox[2] - bbox[0], bbox[3] - bbox[1])
+    size = int(size * 1.2)
+    bbox = center[0] - size // 2, center[1] - size // 2, center[0] + size // 2, center[1] + size // 2
+    output = output.crop(bbox)  # type: ignore
+    output = output.resize((resolution, resolution), Image.Resampling.LANCZOS)
+    output = np.array(output).astype(np.float32) / 255
+    output = output[:, :, :3] * output[:, :, 3:4]
+    output = Image.fromarray((output * 255).astype(np.uint8))
+    return output
 
 def estimate_normal(image, normal_predictor, resolution=1024, match_input_resolution=True, num_inference_steps=None):
     # Use the NiRNE predictor wrapper interface to produce a normal map (PIL.Image)
@@ -52,10 +112,7 @@ def infer_image_single(
 
     try:
         image = Image.open(input_path)
-
-        if not skip_preprocess:
-            print("  Preprocessing image...")
-            image = hi3dgen_pipeline.preprocess_image(image, resolution=preprocess_resolution)
+        image = preprocess_image(image, resolution=preprocess_resolution)
 
         if skip_normal:
             print("  Using input as normal map...")
@@ -63,7 +120,7 @@ def infer_image_single(
         else:
             print("  Generating normal map using NiRNE...")
             with torch.no_grad():
-                normal_image = estimate_normal(image, normal_predictor, resolution=normal_resolution,
+                normal_image = estimate_normal(image, normal_predictor, resolution=768,
                                                match_input_resolution=True)
 
         if save_normal and not skip_normal:
@@ -471,7 +528,7 @@ def main(input, output, input_dir, output_dir, model_path, nirne_weights_dir, de
             hi3dgen_pipeline.cuda()
         print("Hi3DGen pipeline loaded successfully!")
     except Exception as e:
-        print(f"Error loading Hi3DGen pipeline: {e}")
+        raise e
         return
 
     # Load NiRNE predictor (unless skipping)
@@ -624,8 +681,8 @@ if __name__ == "__main__":
     # Input/Output
     parser.add_argument("--input", type=str, help="Path to input image file")
     parser.add_argument("--output", type=str, help="Path to output mesh file")
-    parser.add_argument("--input_dir", type=str, help="Path to input directory containing images", default="/workspace/celeba_subset/image/")
-    parser.add_argument("--output_dir", type=str, help="Path to output directory for meshes", default="/workspace/celeba_subset/hi3dgen/")
+    parser.add_argument("--input_dir", type=str, help="Path to input directory containing images", default="/workspace/celeba_reduced/matted_image_centered/")
+    parser.add_argument("--output_dir", type=str, help="Path to output directory for meshes", default="/workspace/celeba_reduced/hi3dgen/")
 
     # Model
     parser.add_argument("--model_path", type=str, default="Stable-X/trellis-normal-v0-1",
@@ -637,8 +694,8 @@ if __name__ == "__main__":
 
     # Processing
     parser.add_argument("--preprocess_resolution", type=int, default=1024,
-                        help="Resolution for image preprocessing (default: 1024)")
-    parser.add_argument("--normal_resolution", type=int, default=1024,
+                        help="Resolution for image preprocessing (default: 768)")
+    parser.add_argument("--normal_resolution", type=int, default=768,
                         help="Resolution for normal estimation (default: 768)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducibility (default: 42)")
@@ -667,8 +724,8 @@ if __name__ == "__main__":
     # Post-processing
     parser.add_argument("--disable_postprocessing", action="store_true",
                         help="Disable mesh post-processing (enabled by default)")
-    parser.add_argument("--target_faces", type=int, default=200_000,
-                        help="Target number of faces for post-processed mesh (default: 300,000)")
+    parser.add_argument("--target_faces", type=int, default=150_000,
+                        help="Target number of faces for post-processed mesh (default: 150,000)")
     
     # Multiview
     parser.add_argument("--multiview_inference", action="store_true",
